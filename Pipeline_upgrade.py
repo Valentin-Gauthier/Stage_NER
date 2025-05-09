@@ -7,19 +7,14 @@ from spacy import displacy
 from time import sleep
 import bs4
 from bs4 import BeautifulSoup
-import os
-import requests
 import re
-#import lxml
-import json
 from pathlib import Path
+import importlib
 # ---------------------------------------
 
 
 # ---------------------- LOAD DATAS -------------------
 def load_excel_file(file_path:str):
-
-
     """
         Load a Excel file into a DataFrame
 
@@ -29,7 +24,6 @@ def load_excel_file(file_path:str):
         Returns:
             df (pd.Dataframe) : the result of Excel file
     """
-
     # Start Chrono
     start_chrono = time.time()
 
@@ -86,25 +80,21 @@ def apply_spacy(df, NER):
 
 def build_ner_dataframe(df, ner_spacy, ner_spacy_id, NER):
     """
-    Build a new DataFrame from the original DataFrame and precomputed NER outputs.
-    
-    The original DataFrame must contain at least two columns: 'titles' and 'desc'.
-    For each row, the function uses the provided NER results (entity text/label and their corresponding indices)
-    to extract a portion of the description text with some context around each entity.
-    
-    Parameters:
-        df (pd.DataFrame): The original DataFrame containing a 'titles' column and a 'desc' (description) column.
-        ner_spacy (list): A list (one per row) of lists of tuples, each tuple containing the entity text and its label.
-                          For example: [[("Barack Obama", "PERSON"), ("Washington", "GPE")], ...]
-        ner_spacy_id (list): A list (one per row) of lists of tuples, each tuple containing the start and end indices of the entity.
-                             For example: [[(0, 12), (20, 30)], ...]
-                             
-    Returns:
-        pd.DataFrame: A new DataFrame with the following columns:
-                      - "titles": the original title repeated for each extracted entity.
-                      - "NER": the extracted entity text.
-                      - "NER_label": the label/type of the entity.
-                      - "desc": a snippet of the original description around the entity.
+        Builds a DataFrame from an original text corpus and precomputed NER results.
+
+        Parameters:
+            df (pd.DataFrame): Input DataFrame with at least 'titles' and 'desc' columns.
+            ner_spacy (list): List of lists of (entity_text, entity_label) tuples per row.
+            ner_spacy_id (list): List of lists of (start_idx, end_idx) tuples per row.
+            NER (Callable): Function that processes text and returns a spaCy Doc or similar object.
+
+        Returns:
+            pd.DataFrame: A new DataFrame with one row per extracted entity:
+                        - "titles": title from the original DataFrame
+                        - "NER": entity text
+                        - "NER_label": entity label
+                        - "desc": snippet from original description around the entity
+                        - "file_id": index of the original row
     """
 
     start_chrono = time.time()
@@ -194,23 +184,23 @@ def generate_text_files(df):
 
 def extract_entities_from_tree(soup_doc: BeautifulSoup, doc_id: int):
     """
-    Ne remonte que les entités ayant un grf et sans ancêtre grf,
-    et stocke pour chacune :
-      - file_id, tag, text, grf (main)
-      - second_graph  = grf du 1er enfant direct
-      - third_graph   = grf du 2ème enfant direct
+        Extracts top-level tagged entities (with 'grf' attribute) from an XML/HTML document tree.
+
+        Parameters:
+            soup_doc (BeautifulSoup): Parsed document.
+            doc_id (int): Identifier of the current document.
+
+        Returns:
+            list[dict]: A list of dictionaries representing the extracted entities.
     """
     entities = []
     excluded = {"s", "p", "doc"}
 
-    # On parcourt tous les éléments taggés avec grf
     for element in soup_doc.find_all(lambda tag: tag.name not in excluded and tag.has_attr("grf")):
-        # Si un des ancêtres a aussi un grf, on l'ignore (c'est un sous-élément)
         if any(ancestor.has_attr("grf") for ancestor in element.parents if ancestor.name not in excluded):
             continue
 
         main_grf = element["grf"]
-        # on collecte les grf des enfants directs pour second et third
         children = [child for child in element.find_all(recursive=False) if child.has_attr("grf")]
         second = children[0]["grf"] if len(children) >= 1 else ""
         third  = children[1]["grf"] if len(children) >= 2 else ""
@@ -245,7 +235,13 @@ def extract_entities_from_file(result_path :str):
 
 def casEN_df_single(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Build a DataFrame of NER results from a single CasEN output file.
+        Build a DataFrame of NER results from a single CasEN output file.
+
+        Parameters:
+            df (pd.DataFrame) : original data DataFrame
+
+        Returns:
+            df_casEN (pd.DataFrame) : CasEN Result format in DataFrame
     """
     start = time.time()
 
@@ -369,20 +365,24 @@ def merge_spacy_casEN(df_spacy:pd.DataFrame,df_casEN:pd.DataFrame) -> pd.DataFra
 
     return merge[final_columns]
 
+# --------------------- PIPELINE & GENERATE THE EXCEL FILE ---------------------------------
 def Pipeline(data_path:str, excel_result:str, spacy_model:str="fr_core_news_sm"):
     """
         Run everything in one function
 
-    """
-    print(f"spacy model :{spacy_model}")
-    
+    """    
     # Start Chrono
     start_chrono = time.time()
     # Data to load
     df = load_excel_file(data_path)
 
     # ----------------------- Use Spacy ----------------------------
+    importlib.reload(spacy)
     NER = spacy.load(spacy_model)
+    print(f"Loaded spaCy model: {NER.meta['name']}")
+    #print(f"Pipeline components: {NER.pipe_names} (total: {len(NER.pipe_names)})")
+    print(f"Word vectors shape: {NER.vocab.vectors.shape}")
+
     ner_spacy, ner_spacy_id = apply_spacy(df, NER)
     df_spacy = build_ner_dataframe(df, ner_spacy, ner_spacy_id, NER)
 
