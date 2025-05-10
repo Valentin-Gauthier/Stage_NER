@@ -19,7 +19,8 @@ class Pipeline:
                  casEN_corpus_folder:str="Corpus",
                  casEN_corpus_unique:bool=True,
                  casEN_result_folder:str="CasEN_Result/Res_CasEN_Analyse_synthese_grf",
-                 Excel_result_path : str = ""
+                 Excel_result_path : str = "",
+                 correction_path : str = None,
                  ):
        
         self.timer_option = timer_option  # display the time
@@ -31,6 +32,7 @@ class Pipeline:
         self.casEN_corpus_unique = casEN_corpus_unique # choose if we want generate unique or multiple files before casEN analyse
         self.casEN_result_folder = casEN_result_folder # the path of the result files by casEN
         self.Excel_result_path = Excel_result_path # the location of the Excel file product by the Pipeline
+        self.correction_path = correction_path
 
         self.load_excel(Excel_files) # Load the self.df
 
@@ -350,10 +352,31 @@ class Pipeline:
         return self.merge
 
     @chrono
+    def correct_excel(self):
+
+        correction_df = pd.read_excel(self.correction_path)
+
+        correction_df["key"] = correction_df[["titles", "NER", "NER_label", "method", "hash"]].apply(tuple, axis=1)
+        self.merge["key"] = self.merge[["titles", "NER", "NER_label", "method", "file_id"]].apply(tuple, axis=1)
+
+        cols_to_copy = ["manual cat", "correct", "extent", "category"]
+
+        correction_dict = correction_df.set_index("key")[cols_to_copy].to_dict(orient="index")
+
+        for col in cols_to_copy:
+            self.merge[col] = self.merge["key"].map(lambda k: correction_dict.get(k, {}).get(col, ""))
+
+        self.merge.drop(columns=["key"], inplace=True)
+
+        return self.merge
+    
+    @chrono
     def run(self, verbose: bool = False) -> str:
         self.use_spaCy(verbose=verbose)
         self.use_casEN(verbose=verbose)
         self.merge_spacy_casEN(verbose=verbose)
+        if self.correction_path != None:
+            self.correct_excel()
 
         base_filename = Path(self.Excel_result_path) / "Pipeline_v1.xlsx"
         filename = base_filename
@@ -364,7 +387,7 @@ class Pipeline:
             filename = base_filename.with_stem(f"{base_filename.stem}({counter})")
             counter += 1
 
-        self.merge.to_excel(filename)
+        self.merge.to_excel(filename, index=False)
         return f"Excel file saved as {filename}"
 
 
