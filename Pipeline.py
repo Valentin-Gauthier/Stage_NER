@@ -13,13 +13,15 @@ class Pipeline:
                  Excel_files:str, 
                  timer_option:bool=True, 
                  log_option:bool=True,
-                 log_destination:str="",
+                 log_destination:str="Result/log",
                  spaCy_model:str="fr_core_news_sm",
-                 casEN_ipynb_location:str="CasEN_fr/CasEN_fr.2.0/CasEN.ipynb",
-                 casEN_corpus_folder:str="Corpus",
+                 include_casEN_MISC : bool = True,
+                 remove_duplicate_rows : bool = True,
+                 casEN_ipynb_location:str="../CasEN_fr.2.0/CasEN.ipynb",
+                 casEN_corpus_folder:str="Result/Corpus",
                  casEN_corpus_unique:bool=True,
-                 casEN_result_folder:str="CasEN_Result/Res_CasEN_Analyse_synthese_grf",
-                 Excel_result_path : str = "",
+                 casEN_result_folder:str="Result/CasEN_Result/Res_CasEN_Analyse_synthese_grf",
+                 Excel_result_path : str = "Result/xlsx/",
                  correction_path : str = None,
                  ):
        
@@ -27,6 +29,8 @@ class Pipeline:
         self.log_option = log_option  # write every return in log file
         self.log_location = Path(log_destination) if log_destination else Path("logs/log.txt")
         self.nlp = spacy.load(spaCy_model)  # natural language processing
+        self.include_casEN_MISC = include_casEN_MISC
+        self.remove_duplicate_rows = remove_duplicate_rows
         self.casEN_ipynb_location = casEN_ipynb_location # the code for running casEN
         self.casEN_corpus_folder = casEN_corpus_folder # the path for the corpus folder
         self.casEN_corpus_unique = casEN_corpus_unique # choose if we want generate unique or multiple files before casEN analyse
@@ -90,8 +94,8 @@ class Pipeline:
                     - 'file_id': The index of the original row in the source DataFrame.
         """
         if verbose:
-            print(f"spaCy version: {spacy.__version__}")
-            print(f"spaCy model: {self.nlp.meta.get('name', 'unknown')}")
+            print(f"[spaCy] spaCy version: {spacy.__version__}")
+            print(f"[spaCy] spaCy model: {self.nlp.meta.get('name', 'unknown')}")
 
         rows = []
         for idx, df_row in self.df.iterrows():
@@ -124,7 +128,7 @@ class Pipeline:
         if not folder.is_dir():
             raise NotADirectoryError(f"Provided casEN path is not a folder : {folder}")
         if verbose:
-            print(f"[casEN] Corpus folder : {folder}")
+            print(f"[casEN] folder : {folder}")
 
         # removed everything in the folder
         files = list(folder.iterdir())
@@ -155,6 +159,7 @@ class Pipeline:
 
         if unique_file:
             # Case 1: Generate a single corpus.txt file
+            missing_desc = (self.df["desc"] == "").sum()
             corpus_path = Path(self.casEN_corpus_folder) / "corpus.txt"
             with open(corpus_path, 'w', encoding="utf-8") as f:
                 for idx, row in self.df.iterrows():
@@ -162,7 +167,8 @@ class Pipeline:
                     f.write(str(row["desc"]))
                     f.write('</doc>\n')
             if verbose:
-                print(f"[casEN] Single corpus file generated: {corpus_path}")
+                print(f"[prepare folder] Single corpus file generated: {corpus_path}")
+                print(f"[prepare folder] Missing description : {missing_desc}")
         else:
             # Case 2: Generate one file per row
             for idx, row in self.df.iterrows():
@@ -172,7 +178,8 @@ class Pipeline:
                     f.write(str(row["desc"]))
                     f.write('</doc>\n')
             if verbose:
-                print(f"[casEN] {len(self.df)} individual corpus files generated in {self.casEN_corpus_folder}")
+                print(f"[prepare folder] {len(self.df)} individual corpus files generated in {self.casEN_corpus_folder}")
+                print(f"[prepare folder] Missing description : {missing_desc}")
 
     def extract_entities_from_desc(self, soup_doc : BeautifulSoup, doc_id:int) -> list[dict]:
         entities = []
@@ -281,13 +288,16 @@ class Pipeline:
         entities_list = self.extract_casEN_entities()
         rows = []
         for entity in entities_list:
+            ner_label =  self.find_ner_label(entity["tag"])
+            if  not self.include_casEN_MISC and ner_label == "MISC":
+                continue
             idx = entity["file_id"]
             ner_text = entity["text"]
             context = self.get_ner_context(self.df.loc[idx, "desc"], ner_text, window=7)
             rows.append({
                 "titles": self.df.loc[idx, "titles"],
                 "NER" : ner_text,
-                "NER_label": self.find_ner_label(entity["tag"]),
+                "NER_label":ner_label,
                 "desc" : context,
                 "method" : "casEN",
                 "main_graph": entity["grf"],
@@ -318,6 +328,9 @@ class Pipeline:
         if casEN_df is None:
             casEN_df = self.casEN_df
 
+        if verbose == True:
+            df_non_vides = self.df[self.df["desc"] != ""]
+
         # Create unique key on ("titles", "NER", "NER_label")
         spaCy_df["key"] = spaCy_df[["titles", "NER", "NER_label", "file_id"]].apply(lambda x: tuple(x), axis=1)
         casEN_df["key"] = casEN_df[["titles", "NER", "NER_label", "file_id"]].apply(lambda x: tuple(x), axis=1)
@@ -346,9 +359,17 @@ class Pipeline:
         final_columns = ['manual cat', 'correct', 'extent', 'category','titles', 'NER', 'NER_label', 'desc', 'method',
                         'main_graph', 'second_graph', 'third_graph', "file_id"]
 
-        merge = merge.drop_duplicates(subset=["titles", "NER", "NER_label", "method", "main_graph", "second_graph", "third_graph"])
+        if not self.remove_duplicate_rows:
+            merge = merge.drop_duplicates(subset=["titles", "NER", "NER_label", "method", "main_graph", "second_graph", "third_graph"])
 
         self.merge = merge[final_columns]
+
+        if verbose == True:
+            files_with_entities = set(merge["file_id"])
+            total_with_desc = len(df_non_vides)
+            desc_without_entity = total_with_desc - len(files_with_entities)
+            print(f"[merge] description without entities : {desc_without_entity}")
+
         return self.merge
 
     @chrono
@@ -356,8 +377,8 @@ class Pipeline:
 
         correction_df = pd.read_excel(self.correction_path)
 
-        correction_df["key"] = correction_df[["titles", "NER", "NER_label", "method", "hash"]].apply(tuple, axis=1)
-        self.merge["key"] = self.merge[["titles", "NER", "NER_label", "method", "file_id"]].apply(tuple, axis=1)
+        correction_df["key"] = correction_df[["NER", "NER_label", "hash"]].apply(tuple, axis=1)
+        self.merge["key"] = self.merge[["NER", "NER_label", "file_id"]].apply(tuple, axis=1)
 
         cols_to_copy = ["manual cat", "correct", "extent", "category"]
 
@@ -378,11 +399,11 @@ class Pipeline:
         if self.correction_path != None:
             self.correct_excel()
 
-        base_filename = Path(self.Excel_result_path) / "Pipeline_v1.xlsx"
+        base_filename = Path(self.Excel_result_path) / "Pipeline.xlsx"
         filename = base_filename
         counter = 1
 
-        # Check if file already exists, and increment name if needed
+        # Check if file already exists
         while filename.exists():
             filename = base_filename.with_stem(f"{base_filename.stem}({counter})")
             counter += 1
