@@ -370,6 +370,7 @@ class Pipeline:
             desc_without_entity = total_with_desc - len(files_with_entities)
             print(f"[merge] description without entities : {desc_without_entity}")
 
+
         return self.merge
 
     @chrono
@@ -409,7 +410,7 @@ class Pipeline:
             counter += 1
 
         self.merge.to_excel(filename, index=False)
-        return f"Excel file saved as {filename}"
+        return f"Excel file saved as {filename}."
 
 
 
