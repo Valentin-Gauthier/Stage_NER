@@ -6,6 +6,7 @@ from pathlib import Path
 import shutil
 import re
 from bs4 import BeautifulSoup
+import json
 
 class Pipeline:
 
@@ -16,13 +17,14 @@ class Pipeline:
                  log_destination:str="Result/log",
                  spaCy_model:str="fr_core_news_sm",
                  include_casEN_MISC : bool = True,
-                 remove_duplicate_rows : bool = True,
+                 remove_duplicate_rows : bool = False,
                  casEN_ipynb_location:str="../CasEN_fr.2.0/CasEN.ipynb",
                  casEN_corpus_folder:str="Result/Corpus",
                  casEN_corpus_unique:bool=True,
                  casEN_result_folder:str="Result/CasEN_Result/Res_CasEN_Analyse_synthese_grf",
                  Excel_result_path : str = "Result/xlsx/",
                  correction_path : str = None,
+                 allowed_grf:str=None
                  ):
        
         self.timer_option = timer_option  # display the time
@@ -36,7 +38,8 @@ class Pipeline:
         self.casEN_corpus_unique = casEN_corpus_unique # choose if we want generate unique or multiple files before casEN analyse
         self.casEN_result_folder = casEN_result_folder # the path of the result files by casEN
         self.Excel_result_path = Excel_result_path # the location of the Excel file product by the Pipeline
-        self.correction_path = correction_path
+        self.correction_path = correction_path # THe path for the correction(if None, no correction)
+        self.allowed_grf = allowed_grf # the path for the JSON file wich contains graphs we want to keep in only casEN entities
 
         self.load_excel(Excel_files) # Load the self.df
 
@@ -343,8 +346,8 @@ class Pipeline:
         merge['method'] = merge.apply(self.determine_method, axis=1)
         merge["NER"] = merge["NER_spacy"].combine_first(merge["NER_casEN"])
         merge["NER_label"] = merge["NER_label_spacy"].combine_first(merge["NER_label_casEN"])
-        merge["desc"] = merge["desc_casEN"].combine_first(merge["desc_spacy"])
-        merge["file_id"] = merge["file_id_casEN"].combine_first(merge["file_id_spacy"])
+        merge["desc"] = merge["desc_spacy"].combine_first(merge["desc_casEN"])
+        merge["file_id"] = merge["file_id_spacy"].combine_first(merge["file_id_casEN"])
         
         merge = merge.sort_values(
             by=["file_id"], 
@@ -359,7 +362,7 @@ class Pipeline:
         final_columns = ['manual cat', 'correct', 'extent', 'category','titles', 'NER', 'NER_label', 'desc', 'method',
                         'main_graph', 'second_graph', 'third_graph', "file_id"]
 
-        if not self.remove_duplicate_rows:
+        if self.remove_duplicate_rows:
             merge = merge.drop_duplicates(subset=["titles", "NER", "NER_label", "method", "main_graph", "second_graph", "third_graph"])
 
         self.merge = merge[final_columns]
@@ -374,7 +377,53 @@ class Pipeline:
         return self.merge
 
     @chrono
-    def correct_excel(self):
+    def optimisation(self, merge:pd.DataFrame=None,allowed_grf:list=None, verbose:bool=False) -> pd.DataFrame:
+            """
+            
+                Preserves the maximum amount of data while maintaining the best possible accuracy
+
+                Parameters:
+                    merge (pd.DataFrame): result of the merger between spaCy and casEN 
+
+                    allowed_grf (str): the path for the  JSON file contains graphs
+
+                Returns:
+                    pd.DataFrame 
+            """
+            
+            if merge is None:
+                merge = self.merge
+            if allowed_grf is None:
+                allowed_grf = self.allowed_grf
+
+            with open(allowed_grf, 'r', encoding="utf-8") as f:
+                allowed = json.load(f)
+
+            def is_allowed(row):
+                for combo in allowed:
+                    if all(row.get(col) == val for col, val in combo.items()):
+                        return True
+                return False
+
+            if verbose:
+                print("[opt] count par méthode avant :", merge["method"].value_counts(dropna=False))
+
+            mask = merge.apply(
+                lambda row: (
+                    row["method"] == "intersection"
+                    or (row["method"] == "casEN" and is_allowed(row))
+                ),
+                axis=1
+            )
+            if verbose:
+                print("[opt] count par méthode après :", merge.loc[mask, "method"].value_counts(dropna=False))
+
+            self.merge = merge.loc[mask].reset_index(drop=True)
+
+            return self.merge
+
+    @chrono
+    def correct_excel(self, verbose:bool=False):
 
         correction_df = pd.read_excel(self.correction_path)
 
@@ -397,8 +446,12 @@ class Pipeline:
         self.use_spaCy(verbose=verbose)
         self.use_casEN(verbose=verbose)
         self.merge_spacy_casEN(verbose=verbose)
+
+        if self.allowed_grf != None:
+            self.optimisation(verbose=verbose)
+
         if self.correction_path != None:
-            self.correct_excel()
+            self.correct_excel(verbose=verbose)
 
         base_filename = Path(self.Excel_result_path) / "Pipeline.xlsx"
         filename = base_filename
