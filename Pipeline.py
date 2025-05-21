@@ -377,6 +377,48 @@ class Pipeline:
         return self.merge
 
     @chrono
+    def casEN_optimisation(self, merge: pd.DataFrame = None, allowed_grf: list = None, verbose: bool = False):
+        """
+        Parcourt toutes les lignes de `merge`, et pour celles où
+        method == "casEN" ET dont la combinaison de graphes
+        figure dans allowed_grf, remplace "casEN" par "casEN_opti".
+        Ne supprime plus aucune ligne.
+        """
+        if merge is None:
+            merge = self.merge
+        if allowed_grf is None:
+            allowed_grf = self.allowed_grf
+            
+        with open(allowed_grf, 'r', encoding="utf-8") as f:
+            allowed = json.load(f)
+
+        def is_allowed(row):
+            for combo in allowed:
+                if all(row.get(col) == val for col, val in combo.items()):
+                    return True
+            return False
+
+        if verbose:
+            print("[opt] count par méthode avant :")
+            print(merge["method"].value_counts(dropna=False))
+
+        def upgrade_method(row):
+            if row["method"] == "casEN" and is_allowed(row):
+                return "casEN_opti"
+            else:
+                return row["method"]
+
+        merge["method"] = merge.apply(upgrade_method, axis=1)
+
+        if verbose:
+            print("[opt] count par méthode après :")
+            print(merge["method"].value_counts(dropna=False))
+
+
+        self.merge = merge.reset_index(drop=True)
+        return self.merge
+
+    @chrono
     def optimisation(self, merge:pd.DataFrame=None,allowed_grf:list=None, verbose:bool=False) -> pd.DataFrame:
             """
             
@@ -448,12 +490,12 @@ class Pipeline:
         self.merge_spacy_casEN(verbose=verbose)
 
         if self.allowed_grf != None:
-            self.optimisation(verbose=verbose)
+            self.casEN_optimisation(verbose=verbose)
 
         if self.correction_path != None:
             self.correct_excel(verbose=verbose)
 
-        base_filename = Path(self.Excel_result_path) / "Pipeline.xlsx"
+        base_filename = Path(self.Excel_result_path) / "Pipeline_opti_v3.xlsx"
         filename = base_filename
         counter = 1
 
