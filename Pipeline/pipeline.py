@@ -141,15 +141,28 @@ class Pipeline:
         # ----- CasEN ----- #
         if casEN is None:
             casEN = CasEN(
+                path = "D:\\travail\\Stage\\Stage_NER\\CasEN_fr\\CasEN_fr.2.0\\CasEN.ipynb",
                 data = data_df,
                 trustable_grf = False,
-                verbose = self.verbose
+                remove_casEN_MISC = True,
+                archiving = True,
+                unique_corpus_file = True,
+                corpus_folder = "D:\\travail\\Stage\\Stage_NER\\Result\\Corpus",
+                casEN_result = "D:\\travail\\Stage\\Stage_NER\\Result\\CasEN_Result\\Res_CasEN_Analyse_synthese_grf",
+                make_excel = False,
+                timer_option = True,
+                log_option = True,
+                log_path = "D:\\travail\\Stage\\Stage_NER\\Pipeline\Logs",
+                verbose = True
             )
+        else:
+            casEN.data = data_df
+            
         self.casEN = casEN
 
         # ------- RUN -------- #
         self.spaCy_df = spaCy.run()
-        self.casEN_df  = casEN.run()
+        self.casEN_df = casEN.run()
 
         # ----- MERGE --- #
         self.merge_spacy_casEN()

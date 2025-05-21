@@ -84,4 +84,7 @@ class SpaCy():
         if self.make_excel is not None:
             self.df.to_excel(f"{self.make_excel}.xlsx")
 
+        if verbose:
+            print("SpaCy run is finish")
+
         return self.df

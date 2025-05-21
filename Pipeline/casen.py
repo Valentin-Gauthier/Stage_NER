@@ -204,4 +204,6 @@ class CasEN():
         self.execute_casEN()
         # make dataframe
         self.make_df()
+
+        return self.casEN_df
     
