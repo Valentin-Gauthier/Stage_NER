@@ -1,16 +1,24 @@
 from spacy_wrapper import SpaCy
 from casen import CasEN
+import pandas as pd
+from pathlib import Path
+import utils
 import time
 from datetime import datetime
-import pandas as pd
 
 class Pipeline:
 
-    def __init__(self, spaCy:SpaCy=None, casEN:CasEN=None):
+    def __init__(self, spaCy:SpaCy=None, casEN:CasEN=None, data:str="", timer_option:bool=False, log_option:bool=False, log_path:str="", verbose:bool=False):
         self.spaCy = spaCy
         self.casEN = casEN
 
+        self.data = data
+        self.timer_option = timer_option
+        self.log_option = log_option
+        self.verbose = verbose
+        self.log_location = Path(log_path) if log_path else Path("Logs/log.txt")
 
+    # ---------------------------- TOOLS ----------------------- #
     def log(self, step:str, duration:float):
         timestamp = datetime.now().strftime("[%Y-%m-%d %H:%M:%S]")
 
@@ -39,17 +47,43 @@ class Pipeline:
             return result
         return wrapper
 
+    # ---------------------------------- METHODS ---------------------------------- #
 
-
+    @chrono
     def run(self, spaCy:SpaCy=None, casEN:CasEN=None):
 
-        if spaCy is None:
-            spaCy = self.spaCy
-        if casEN is None:
-            casEN = self.casEN
+        # ----- INIT ----- #
+        data_df = utils.load_data(self.data, self.verbose)
 
-        spaCy.run()
-        casEN.run()
+        spaCy = spaCy or self.spaCy
+        casEN = casEN or self.casEN
+        # ----- SpaCy ----- #
+        if spaCy is None:
+            spaCy = SpaCy(
+                data = data_df,
+                timer_option = self.timer_option,
+                log_option = self.log_option,
+                log_path = self.log_location,
+                verbose = self.verbose
+            )
+        else:
+            spaCy.data = data_df
+
+        self.spaCy = spaCy
+        # ----- CasEN ----- #
+        if casEN is None:
+            casEN = CasEN(
+                trustable_grf=False,
+                verbose=self.verbose
+            )
+        self.casEN = casEN
+
+        # ------- RUN -------- #
+        self.spacy_df = spaCy.run()
+        self.casEN_df  = casEN.run()
+
+        # ----- MERGE --- #
+
         
 
     
