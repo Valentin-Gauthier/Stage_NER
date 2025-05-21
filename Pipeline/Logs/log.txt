@@ -1,0 +1,9 @@
+[2025-05-21 16:46:33] - SpaCy [run] finish in 63.76 s.
+[2025-05-21 16:49:14] - CasEN [execute_casEN] finish in 160.47 s.
+[2025-05-21 16:49:15] - CasEN [extract_casEN_entities] finish in 1.52 s.
+[2025-05-21 16:50:03] - CasEN [make_df] finish in 48.62 s.
+[2025-05-21 16:50:03] - CasEN [casEN_optimisation] finish in 0.78 s.
+[2025-05-21 16:50:03] - CasEN [run] finish in 210.12 s.
+[2025-05-21 16:50:04] - Pipeline [merge_spacy_casEN] finish in 0.31 s.
+[2025-05-21 16:50:06] - Pipeline [correct_excel] finish in 2.33 s.
+[2025-05-21 16:50:10] - Pipeline [run] finish in 281.67 s.

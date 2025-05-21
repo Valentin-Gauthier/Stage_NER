@@ -5,13 +5,14 @@ from pathlib import Path
 from bs4 import BeautifulSoup
 import re
 import pandas as pd
+import json
 
 class CasEN():
 
-    def __init__(self, path:str="", data:str=None, trustable_grf:bool=False, remove_casEN_MISC:bool=True, archiving:bool=False, unique_corpus_file:bool=True, corpus_folder:str="", casEN_result:str="", make_excel:bool=False, timer_option:bool=False, log_option:bool=False, log_path:str="", verbose:bool=False):
+    def __init__(self, path:str="", data:str=None, allowed_grf:bool=False, remove_casEN_MISC:bool=True, archiving:bool=False, unique_corpus_file:bool=True, corpus_folder:str="", casEN_result:str="", make_excel:bool=False, timer_option:bool=False, log_option:bool=False, log_path:str="", verbose:bool=False):
         self.path = path
         self.data = data
-        self.trustable_grf = trustable_grf
+        self.allowed_grf = allowed_grf
         self.remove_casEN_MISC = remove_casEN_MISC
         self.archiving = archiving
         self.corpus_folder = corpus_folder
@@ -189,6 +190,49 @@ class CasEN():
             self.casEN_df = pd.DataFrame(rows)
         return self.casEN_df
 
+    @chrono
+    def casEN_optimisation(self, casEN_df: pd.DataFrame = None, allowed_grf: list = None, verbose: bool = None):
+        """
+            Parcourt toutes les lignes de `merge`, et pour celles où
+            method == "casEN" ET dont la combinaison de graphes
+            figure dans allowed_grf, remplace "casEN" par "casEN_opti".
+            Ne supprime plus aucune ligne.
+        """
+        if casEN_df is None:
+            casEN_df = self.casEN_df
+        if allowed_grf is None:
+            allowed_grf = self.allowed_grf
+        if verbose is None:
+            verbose = self.verbose
+            
+        with open(allowed_grf, 'r', encoding="utf-8") as f:
+            allowed = json.load(f)
+
+        def is_allowed(row):
+            for combo in allowed:
+                if all(row.get(col) == val for col, val in combo.items()):
+                    return True
+            return False
+
+        if verbose:
+            print("[opt] count par méthode avant :")
+            print(casEN_df["method"].value_counts(dropna=False))
+
+        def upgrade_method(row):
+            if row["method"] == "casEN" and is_allowed(row):
+                return "casEN_opti"
+            else:
+                return row["method"]
+
+        casEN_df["method"] = casEN_df.apply(upgrade_method, axis=1)
+
+        if verbose:
+            print("[opt] count par méthode après :")
+            print(casEN_df["method"].value_counts(dropna=False))
+
+
+        self.casEN_df = casEN_df.reset_index(drop=True)
+        return self.casEN_df
 
     @chrono
     def run(self, verbose:bool=None):
@@ -204,6 +248,9 @@ class CasEN():
         self.execute_casEN()
         # make dataframe
         self.make_df()
+
+        if self.allowed_grf:
+            self.casEN_optimisation()
 
         return self.casEN_df
     

@@ -8,11 +8,12 @@ from datetime import datetime
 
 class Pipeline:
 
-    def __init__(self, spaCy:SpaCy=None, casEN:CasEN=None, data:str="", pipeline_result:str="", remove_duplicate_rows:bool=False, timer_option:bool=False, log_option:bool=False, log_path:str="", verbose:bool=False):
+    def __init__(self, spaCy:SpaCy=None, casEN:CasEN=None, data:str="", correction_path:str=None, pipeline_result:str="", remove_duplicate_rows:bool=False, timer_option:bool=False, log_option:bool=False, log_path:str="", verbose:bool=False):
         self.spaCy = spaCy
         self.casEN = casEN
 
         self.data = data
+        self.correction_path = correction_path
         self.pipeline_result = pipeline_result
         self.remove_duplicate_rows = remove_duplicate_rows
         self.timer_option = timer_option
@@ -118,6 +119,28 @@ class Pipeline:
 
 
     @chrono
+    def correct_excel(self, verbose:bool=None):
+
+        if verbose is None:
+            verbose = self.verbose
+
+        correction_df = pd.read_excel(self.correction_path)
+
+        correction_df["key"] = correction_df[["NER", "NER_label", "hash"]].apply(tuple, axis=1)
+        self.merge["key"] = self.merge[["NER", "NER_label", "file_id"]].apply(tuple, axis=1)
+
+        cols_to_copy = ["manual cat", "correct", "extent", "category"]
+
+        correction_dict = correction_df.set_index("key")[cols_to_copy].to_dict(orient="index")
+
+        for col in cols_to_copy:
+            self.merge[col] = self.merge["key"].map(lambda k: correction_dict.get(k, {}).get(col, ""))
+
+        self.merge.drop(columns=["key"], inplace=True)
+
+        return self.merge
+
+    @chrono
     def run(self, spaCy:SpaCy=None, casEN:CasEN=None):
 
         # ----- INIT ----- #
@@ -157,7 +180,7 @@ class Pipeline:
             )
         else:
             casEN.data = data_df
-            
+
         self.casEN = casEN
 
         # ------- RUN -------- #
@@ -166,6 +189,10 @@ class Pipeline:
 
         # ----- MERGE --- #
         self.merge_spacy_casEN()
+
+        # ---- CORRECTION ---- #
+        if self.correction_path != None:
+            self.correct_excel()
 
         # --------- Generate Excel file  ------
 
