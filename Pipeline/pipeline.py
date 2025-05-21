@@ -8,11 +8,13 @@ from datetime import datetime
 
 class Pipeline:
 
-    def __init__(self, spaCy:SpaCy=None, casEN:CasEN=None, data:str="", timer_option:bool=False, log_option:bool=False, log_path:str="", verbose:bool=False):
+    def __init__(self, spaCy:SpaCy=None, casEN:CasEN=None, data:str="", pipeline_result:str="", remove_duplicate_rows:bool=False, timer_option:bool=False, log_option:bool=False, log_path:str="", verbose:bool=False):
         self.spaCy = spaCy
         self.casEN = casEN
 
         self.data = data
+        self.pipeline_result = pipeline_result
+        self.remove_duplicate_rows = remove_duplicate_rows
         self.timer_option = timer_option
         self.log_option = log_option
         self.verbose = verbose
@@ -49,11 +51,77 @@ class Pipeline:
 
     # ---------------------------------- METHODS ---------------------------------- #
 
+    def determine_method(self,row):
+        if row['_merge'] == 'both':
+            return "intersection"
+        elif row['_merge'] == 'left_only':
+            return row['method_spacy']
+        elif row['_merge'] == 'right_only':
+            return row['method_casEN']
+        else:
+            return "Spacy"
+
+    @chrono
+    def merge_spacy_casEN(self, spaCy_df:pd.DataFrame=None, casEN_df:pd.DataFrame=None, verbose:bool=False) -> pd.DataFrame:
+        """
+
+        """
+        if spaCy_df is None:
+            spaCy_df = self.spaCy_df
+        if casEN_df is None:
+            casEN_df = self.casEN_df
+
+        if verbose == True:
+            df_non_vides = self.data[self.data["desc"] != ""]
+
+        # Create unique key on ("titles", "NER", "NER_label")
+        spaCy_df["key"] = spaCy_df[["titles", "NER", "NER_label", "file_id"]].apply(lambda x: tuple(x), axis=1)
+        casEN_df["key"] = casEN_df[["titles", "NER", "NER_label", "file_id"]].apply(lambda x: tuple(x), axis=1)
+
+        # merge dataframs on the key
+        merge = pd.merge(spaCy_df, casEN_df, on='key', how='outer',suffixes=('_spacy', '_casEN'), indicator=True)
+
+        # fix the shared columns
+        merge["titles"] = merge["titles_spacy"].combine_first(merge["titles_casEN"])
+        merge['method'] = merge.apply(self.determine_method, axis=1)
+        merge["NER"] = merge["NER_spacy"].combine_first(merge["NER_casEN"])
+        merge["NER_label"] = merge["NER_label_spacy"].combine_first(merge["NER_label_casEN"])
+        merge["desc"] = merge["desc_spacy"].combine_first(merge["desc_casEN"])
+        merge["file_id"] = merge["file_id_spacy"].combine_first(merge["file_id_casEN"])
+        
+        merge = merge.sort_values(
+            by=["file_id"], 
+            ascending=[True]
+        ).reset_index(drop=True)
+
+        merge["manual cat"] = ""
+        merge["extent"] = ""
+        merge["correct"] = ""
+        merge["category"] = ""
+
+        final_columns = ['manual cat', 'correct', 'extent', 'category','titles', 'NER', 'NER_label', 'desc', 'method',
+                        'main_graph', 'second_graph', 'third_graph', "file_id"]
+
+        if self.remove_duplicate_rows:
+            merge = merge.drop_duplicates(subset=["titles", "NER", "NER_label", "method", "main_graph", "second_graph", "third_graph"])
+
+        self.merge = merge[final_columns]
+
+        if verbose:
+            files_with_entities = set(merge["file_id"])
+            total_with_desc = len(df_non_vides)
+            desc_without_entity = total_with_desc - len(files_with_entities)
+            print(f"[merge] description without entities : {desc_without_entity}")
+
+
+        return self.merge
+
+
     @chrono
     def run(self, spaCy:SpaCy=None, casEN:CasEN=None):
 
         # ----- INIT ----- #
-        data_df = utils.load_data(self.data, self.verbose)
+        data_df = utils.load_data(data=self.data,timer_option=self.timer_option, log_option=self.log_option, verbose=self.verbose)
 
         spaCy = spaCy or self.spaCy
         casEN = casEN or self.casEN
@@ -73,17 +141,33 @@ class Pipeline:
         # ----- CasEN ----- #
         if casEN is None:
             casEN = CasEN(
-                trustable_grf=False,
-                verbose=self.verbose
+                data = data_df,
+                trustable_grf = False,
+                verbose = self.verbose
             )
         self.casEN = casEN
 
         # ------- RUN -------- #
-        self.spacy_df = spaCy.run()
+        self.spaCy_df = spaCy.run()
         self.casEN_df  = casEN.run()
 
         # ----- MERGE --- #
+        self.merge_spacy_casEN()
 
+        # --------- Generate Excel file  ------
+
+        base_filename = Path(self.pipeline_result) / "Pipeline.xlsx"
+        filename = base_filename
+        counter = 1
+
+        # Check if file already exists
+        while filename.exists():
+            filename = base_filename.with_stem(f"{base_filename.stem}({counter})")
+            counter += 1
+
+        self.merge.to_excel(filename, index=False)
+
+        return self.merge
         
 
     

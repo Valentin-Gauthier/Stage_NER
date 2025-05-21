@@ -123,7 +123,7 @@ class Pipeline:
         self.prepare_folder(self.casEN_result_folder, verbose)
         get_ipython().run_line_magic('run', str(self.casEN_ipynb_location))
             
-    def prepare_folder(self, folder_path:str, verbose:bool=False):
+    def prepare_folder(folder_path:str, verbose:bool=False):
         folder = Path(folder_path)
         # check if the path is good
         if not  folder.exists():
