@@ -4,6 +4,9 @@ import shutil
 import time
 from datetime import datetime
 
+
+#ARCHIVES_FOLDER = "C:\\Users\\valen\\Documents\\Informatique-L3\\Stage\\Stage\\Pipeline\\Archives"
+
  # ---------------------------- TOOLS ----------------------- #
 # def log(self, step:str, duration:float):
 #     timestamp = datetime.now().strftime("[%Y-%m-%d %H:%M:%S]")
@@ -118,10 +121,28 @@ def generate_casEN_file(df:pd.DataFrame=None, corpus_path:str="", unique_file: b
                     f.write('</doc>\n')
             if verbose:
                 print(f"[generate file(s)] {len(df)} individual corpus files generated in {corpus_path}")
-                print(f"[generate file(s)] Missing description : {missing_desc}")
 
 
+def save_dataframe(df: pd.DataFrame, filename: str, folder: str) -> str:
+    """Save a DataFrame in an Excel file, avoiding overwrite"""
+    
+    path = Path(folder)
+    if not path.exists():
+        raise FileNotFoundError(f"[save] The provided folder does not exist: {path}")
+    if not path.is_dir():
+        raise NotADirectoryError(f"[save] The provided path is not a folder: {path}")
+    
+    base_filename = path / f"{filename}.xlsx"
+    file_to_save = base_filename
+    counter = 1
 
+    while file_to_save.exists():
+        file_to_save = path / f"{filename}({counter}).xlsx"
+        counter += 1
+
+    df.to_excel(file_to_save, index=False, engine="openpyxl")
+
+    return str(file_to_save)
 
 
 

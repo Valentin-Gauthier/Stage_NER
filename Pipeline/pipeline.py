@@ -5,14 +5,17 @@ from pathlib import Path
 import utils
 import time
 from datetime import datetime
+import json
 
 class Pipeline:
 
-    def __init__(self, spaCy:SpaCy=None, casEN:CasEN=None, data:str="", correction_path:str=None, pipeline_result:str="", remove_duplicate_rows:bool=False, timer_option:bool=False, log_option:bool=False, log_path:str="", verbose:bool=False):
+    def __init__(self, spaCy:SpaCy=None, casEN:CasEN=None, data:str="", casEN_enrichment:bool=True, grf:str="" ,correction_path:str=None, pipeline_result:str="", remove_duplicate_rows:bool=False, timer_option:bool=False, log_option:bool=False, log_path:str="", verbose:bool=False):
         self.spaCy = spaCy
         self.casEN = casEN
 
         self.data = data
+        self.casEN_enrichment = casEN_enrichment
+        self.grf = grf
         self.correction_path = correction_path
         self.pipeline_result = pipeline_result
         self.remove_duplicate_rows = remove_duplicate_rows
@@ -63,6 +66,63 @@ class Pipeline:
             return "Spacy"
 
     @chrono
+    def merge_enrichment(self,df:pd.DataFrame=None, verbose:bool=None) -> pd.DataFrame:
+        """ Performs cross enrichment: if both spaCy and casEN detect the same entity with different labels, prefer casEN’s label for higher accuracy """
+        verbose = verbose or self.verbose
+
+        # filter spaCy and casEN
+        spaCy_df = df[df["method"] == "spaCy"]
+        casEN_df = df[df["method"] == "casEN"]
+
+        merged = pd.merge(spaCy_df, casEN_df, on=["NER", "file_id"], suffixes=("_spacy","_casen"))
+
+        conflicts = merged[merged["NER_label_spacy"] != merged["NER_label_casen"]]
+
+        if verbose:
+            print(f"[merge_enrichment] {len(conflicts)} conflicting entities found (spaCy vs casEN)")
+
+        def is_allowed(row):
+            with open(self.grf, 'r', encoding="utf-8") as f:
+                allowed = json.load(f)  
+
+            for combo in allowed:
+                if (
+                    row.get("main_graph_casen") == combo.get("main_graph") and
+                    row.get("second_graph_casen") == combo.get("second_graph") and
+                    row.get("third_graph_casen") == combo.get("third_graph")
+                ):
+                    return True
+            return False
+
+        with open("C:\\Users\\valen\\Documents\\Informatique-L3\\Stage\\Stage\\name.json", 'r', encoding="utf-8") as f:
+            name = json.load(f)
+
+        name_list = name[0].get("NER")
+
+        new_rows = []
+        for _, row in conflicts.iterrows():
+            #if is_allowed(row): # if we want to check graphes
+            if row["NER_label_casen"] == "PER" and row["NER"] not in name_list:
+                new_rows.append({
+                    "titles": row["titles_spacy"],
+                    "NER": row["NER"],
+                    "NER_label": row["NER_label_casen"],
+                    "desc": row["desc_spacy"],           
+                    "method": "cross-enrichment",
+                    "main_graph" : row["main_graph_casen"],
+                    "second_graph" : row["second_graph_casen"],
+                    "third_graph" : row["third_graph_casen"],
+                    "file_id": row["file_id"]
+                })
+        if new_rows:
+            df = pd.concat([df, pd.DataFrame(new_rows)], ignore_index=True)
+            df = df.drop_duplicates(subset=["titles", "NER", "NER_label", "desc", "method","main_graph", "second_graph", "third_graph", "file_id"])
+            if verbose:
+                print(f"[merge_enrichment] {len(new_rows)} added.")
+
+        return df
+
+    @chrono
     def merge_spacy_casEN(self, spaCy_df:pd.DataFrame=None, casEN_df:pd.DataFrame=None, verbose:bool=False) -> pd.DataFrame:
         """
 
@@ -90,10 +150,19 @@ class Pipeline:
         merge["desc"] = merge["desc_spacy"].combine_first(merge["desc_casEN"])
         merge["file_id"] = merge["file_id_spacy"].combine_first(merge["file_id_casEN"])
         
+
+        if self.casEN_enrichment:
+            merge = self.merge_enrichment(df=merge, verbose=verbose)
+
+        if self.remove_duplicate_rows:
+            merge = merge.drop_duplicates(subset=["titles", "NER", "NER_label", "method", "main_graph", "second_graph", "third_graph"])
+            if verbose:
+                print("[merge] dropping duplicate rows")
+
         merge = merge.sort_values(
             by=["file_id"], 
             ascending=[True]
-        ).reset_index(drop=True)
+        ).reset_index(drop=True)        
 
         merge["manual cat"] = ""
         merge["extent"] = ""
@@ -102,9 +171,6 @@ class Pipeline:
 
         final_columns = ['manual cat', 'correct', 'extent', 'category','titles', 'NER', 'NER_label', 'desc', 'method',
                         'main_graph', 'second_graph', 'third_graph', "file_id"]
-
-        if self.remove_duplicate_rows:
-            merge = merge.drop_duplicates(subset=["titles", "NER", "NER_label", "method", "main_graph", "second_graph", "third_graph"])
 
         self.merge = merge[final_columns]
 
@@ -117,29 +183,35 @@ class Pipeline:
 
         return self.merge
 
-
     @chrono
-    def correct_excel(self, verbose:bool=None):
+    def correct_excel(self, merge:pd.DataFrame=None, verbose:bool=None):
 
         if verbose is None:
             verbose = self.verbose
 
+        if merge is None:
+            merge = self.merge
+
         correction_df = pd.read_excel(self.correction_path)
 
         correction_df["key"] = correction_df[["NER", "NER_label", "hash"]].apply(tuple, axis=1)
-        self.merge["key"] = self.merge[["NER", "NER_label", "file_id"]].apply(tuple, axis=1)
+        merge["key"] = merge[["NER", "NER_label","file_id"]].apply(tuple, axis=1)
 
         cols_to_copy = ["manual cat", "correct", "extent", "category"]
 
         correction_dict = correction_df.set_index("key")[cols_to_copy].to_dict(orient="index")
 
         for col in cols_to_copy:
-            self.merge[col] = self.merge["key"].map(lambda k: correction_dict.get(k, {}).get(col, ""))
+            merge[col] = merge["key"].map(lambda k: correction_dict.get(k, {}).get(col, ""))
 
-        self.merge.drop(columns=["key"], inplace=True)
+        merge.drop(columns=["key"], inplace=True)
+
+        self.merge = merge
 
         return self.merge
 
+    
+    
     @chrono
     def run(self, spaCy:SpaCy=None, casEN:CasEN=None):
 
@@ -195,19 +267,10 @@ class Pipeline:
             self.correct_excel()
 
         # --------- Generate Excel file  ------
+        filename = f"Pipeline_enrichment_{self.casEN_enrichment}_casEN_opti_{True if self.casEN.allowed_grf else False}_duplicated_rows_{self.remove_duplicate_rows}"
+        save = utils.save_dataframe(self.merge, filename, self.pipeline_result)
 
-        base_filename = Path(self.pipeline_result) / "Pipeline.xlsx"
-        filename = base_filename
-        counter = 1
-
-        # Check if file already exists
-        while filename.exists():
-            filename = base_filename.with_stem(f"{base_filename.stem}({counter})")
-            counter += 1
-
-        self.merge.to_excel(filename, index=False)
-
-        return self.merge
+        return save
         
 
     

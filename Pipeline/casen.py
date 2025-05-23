@@ -6,6 +6,7 @@ from bs4 import BeautifulSoup
 import re
 import pandas as pd
 import json
+from pathlib import Path
 
 class CasEN():
 
@@ -251,6 +252,11 @@ class CasEN():
 
         if self.allowed_grf:
             self.casEN_optimisation()
+
+        if self.make_excel:
+            save = utils.save_dataframe(self.casEN_df, "CasEN_results", str(Path.cwd()))
+            if verbose:
+                print(f"[save] CasEN result save : {save}")
 
         return self.casEN_df
     
