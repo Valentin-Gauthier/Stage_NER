@@ -7,10 +7,11 @@ from datetime import datetime
 import json
 
 class NER:
-    def __init__(self, spaCy:SpaCy | pd.DataFrame, casEN:CasEN | pd.DataFrame, data:str, casEN_priority_merge:bool, casEN_graph_validation:str, remove_duplicate_rows:bool, correction:str=None, logging:bool=True, log_folder:str=None, timer:bool=True, verbose:bool=False):
+    def __init__(self, spaCy:SpaCy | pd.DataFrame, casEN:CasEN | pd.DataFrame, data:str, casEN_priority_merge:bool, casEN_graph_validation:str, remove_duplicate_rows:bool, NER_result_folder:str, correction:str=None, logging:bool=True, log_folder:str=None, timer:bool=True, verbose:bool=False):
         self.spaCy = spaCy
         self.casEN = casEN
         self.data = Path(data)
+        self.NER_result_folder = Path(NER_result_folder)
 
         # ------------------ NER OPTIMISATION -------------------- #
         self.casEN_priority_merge = casEN_priority_merge     
@@ -121,17 +122,15 @@ class NER:
     def apply_correction(self) -> pd.DataFrame:
         """Auto correct """
 
-        self.df["manual cat"] = ""
-        self.df["extent"] = ""
-        self.df["correct"] = ""
-        self.df["category"] = ""
+        columns = ["manual cat", "extent", "correct", "category"]
+
+        for col in columns:
+            self.df[col] = ""
 
         correction_df = pd.read_excel(self.correction)
 
         correction_df["key"] = correction_df[["NER", "NER_label", "hash"]].apply(lambda x: tuple(x), axis=1)
         self.df["key"] = self.df[["NER", "NER_label", "file_id"]].apply(lambda x: tuple(x), axis=1)
-
-        columns = ["manual cat", "extent", "correct", "category"]
 
         correction_dict = correction_df.set_index("key")[columns].to_dict(orient="index")
 
@@ -190,13 +189,13 @@ class NER:
             print(f"[casEN_priority] {len(conflicts)} conflicting entities found (spaCy vs casEN)")
 
         with open("D:\\travail\\Stage\\Stage_NER\\name.json", 'r', encoding="utf-8") as f:
-            name = json.load(f)
+            names = json.load(f)
 
-        name_list = name[0].get("NER")
+        name_list = names[0].get("NER")
 
         new_rows = []
         for _, row in conflicts.iterrows():
-            if row["NER_label_casen"] == "PER" and row["NER"] not in name_list:
+            if row["NER_label_casen"] == "PER" and row["NER"].lower() not in [name.lower() for name in name_list]:
                 new_rows.append({
                     "titles": row["titles_spacy"],
                     "NER": row["NER"],
@@ -218,8 +217,28 @@ class NER:
 
         return self.df
 
+    def save_dataframe(self, filename: str, ) -> str:
+        """Save a DataFrame in an Excel file, avoiding overwrite"""
+        
+        path = Path.cwd()
+        if not path.exists():
+            raise FileNotFoundError(f"[save] The provided folder does not exist: {path}")
+        if not path.is_dir():
+            raise NotADirectoryError(f"[save] The provided path is not a folder: {path}")
+        
+        base_filename = path / f"{filename}.xlsx"
+        file_to_save = base_filename
+        counter = 1
 
-    def run(self) -> pd.DataFrame:
+        while file_to_save.exists():
+            file_to_save = path / f"{filename}({counter}).xlsx"
+            counter += 1
+
+        self.df.to_excel(file_to_save, index=False, engine="openpyxl")
+
+        return f"File saved in : {str(file_to_save)}"
+
+    def run(self) -> str:
         """ Run SpaCy & CasEN et merge both result with NER optimisations"""
         self.data_df = pd.read_excel(self.data) # Load data
         # spaCy config
@@ -250,7 +269,11 @@ class NER:
         if self.correction is not None:
             self.apply_correction()
 
-        return self.df
+        # Save 
+        filename = f"NER"
+        saved = self.save_dataframe(filename)
+
+        return saved
 
 
 
